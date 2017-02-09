@@ -1,0 +1,197 @@
+---
+title: "Williams Defense"
+author: "Caleb Dowdy"
+date: "January 26, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+library(pander)
+library(ggplot2)
+library(dplyr)
+```
+
+# Data 
+
+data obtained from the Offender Based Transaction System (OBTS) was obtained for cases heard in the Florida Twelfth Circuit via a Freedom Of Information Act request.
+
+The raw data consisted of a SQL dump file.  Recovering the data followd the typical procedure for restoring from a dump.[^1]
+
+A separate communication provided a data dictionary (OBTS Criminal Justice data Element Dictionary, July 1997).
+
+In order to retrieve the subset of data related to Judge Williams and Judge Haworth from the database the following SQL query was run:[^2]
+
+```sql
+SELECT *
+    FROM obts_data
+    WHERE "SP_JudgeatSentencing" iLike 'williams%'
+    OR "SP_JudgeatSentencing" iLike 'haworth%';
+```
+
+Just as a sanity check I'll include a list of what names were included in our `iLike` query:
+```sql
+SELECT "SP_JudgeatSentencing",
+    count(*) as "Frequency" 
+    FROM obts_data
+    WHERE "SP_JudgeatSentencing" iLike 'williams%'
+    GROUP BY 1;
+```
+```
+      SP_JudgeatSentencing      | Frequency 
+--------------------------------+-----------
+ WILLIAMS, CHARLES              |     18674
+ WILLIAMS, CHARLES E            |     20587
+```
+
+```sql
+SELECT "SP_JudgeatSentencing",
+    count(*) as "Frequency" 
+    FROM obts_data
+    WHERE "SP_JudgeatSentencing" iLike 'haworth%'
+    GROUP BY 1;
+```
+
+```
+SP_JudgeatSentencing            | Frequency 
+--------------------------------+-----------
+ HAWORTH                        |         2
+ HAWORTH, LEE                   |     18243
+ HAWORTH, LEE E                 |     10780
+```
+As you can see there are a number of variants pressent in our dataset.
+
+
+[^1]: For more info on restoring SQL dump please refer to the following docs https://www.postgresql.org/docs/9.1/static/backup-dump.html
+
+[^2]: More on exporting query results can be found in the postgres docs here: https://www.postgresql.org/docs/9.2/static/sql-copy.html 
+
+```{r read, include=FALSE}
+data <- read.csv("~/Documents/Classes/CJS/Crim_Bias/source.csv", colClasses=c("SP_LengthofConfinement"="numeric"))
+```
+
+Thus, the raw data consists of `r dim(data)[1]` observations each exhibiting `r dim(data)[2]` features.
+
+The quality of the data leaves much to be desired.  Our first course of action is to investigate to what extent each row gives a unique case.
+
+According to the data dictionary, there are fields recording OBTS and case number.  
+
+```{r rename col, include=FALSE}
+##change column names
+colnames(data)[3] <- "OBTS_NUM"
+colnames(data)[4] <- "COURT_DOCKET"
+colnames(data)[7] <- "COURT_DESIGNATOR"
+colnames(data)[9] <- "NAME"
+colnames(data)[11] <- "SEX"
+colnames(data)[12] <- "RACE"
+colnames(data)[57] <- "PROSECUTOR_ACTION"
+colnames(data)[58] <- "COUNSEL"
+colnames(data)[59] <- "CHARGE_UPDATE"
+colnames(data)[60] <- "COURT_CHARGE_LEVEL"
+colnames(data)[61] <- "COURT_CHARGE_DEGREE"
+colnames(data)[71] <- "CHARGE_DESCRIPTION"
+colnames(data)[73] <- "COURT_ACTION"
+colnames(data)[80] <- "JUDGE"
+colnames(data)[78] <- "DATE_SENTENCE_IMPOSED"
+colnames(data)[77] <- "PLEA"
+colnames(data)[76] <- "TRIAL"
+colnames(data)[84] <- "LENGTH_CONFINEMENT"
+colnames(data)[85] <- "TYPE_CONFINEMENT"
+```
+
+## Data Quality 
+Below is a table of the features that contain `NULL` entries along with the total number of complete cases.
+```{r Complete Cases, eval=FALSE, include=FALSE}
+complete<-sapply(data, function(x) sum(complete.cases(x)))
+pander(print(complete[which(complete<68286)]))
+```
+
+--------------------------------------------------------------------
+ BP_BirthDate   BP_USCitzen   BP_FBINumber   IP_ChargeQualifierUnit 
+-------------- ------------- -------------- ------------------------
+    68116           673            0                   0            
+--------------------------------------------------------------------
+
+ 
+----------------------------------------------------------------
+ PP_ChargeQualifierUnit   CP_ChargeQualifierUnit   TRIAL   PLEA 
+------------------------ ------------------------ ------- ------
+           0                        0              61892  60036 
+----------------------------------------------------------------
+ 
+-------------------
+ sp_days_suspended 
+-------------------
+         0         
+-------------------
+
+
+```{r find a key, eval=FALSE, include=FALSE}
+sapply(data, function(x) length(unique(x)))
+```
+
+## Data Subsetting
+
+We subset the data to only allow cases where the prosecutor pursues charges:[^3]
+```{r}
+data_reduced <- data %>% filter((PROSECUTOR_ACTION == "N") | (PROSECUTOR_ACTION == "C"))
+```
+
+- The code `C` implies that the charge is being prosecuted under another court docket number, and the existing court docket number will be eliminated. This will not include situations where cases are remaining separate but being heard simultaneously.
+
+- The code `N` implies that the charge not disposed of at the prosecutor's level (filed for action by the court). The disposal for the charge would be reflected in the court phase.
+
+Restricting on the cases above reduces the total number of observations by `r nrow(data)-nrow(data_reduced)`.
+
+Next, we subset the data to remove any juvenile cases:[^4]
+```{r}
+data2 <- data_reduced %>% filter((COURT_DESIGNATOR != "J"))
+```
+- `J` corresponds to Juvenile Court
+
+Further restricting our previous subset on the cases above reduces the total number of observations by another `r nrow(data_reduced)-nrow(data2)`. In total we have lost `r nrow(data) - nrow(data2)` observations from our raw dataset.
+
+We subset once again to only inlcude cases who are tried as felons:[^5]
+```{r}
+data3 <- data2 %>% filter((COURT_CHARGE_LEVEL == "F"))
+```
+-  `F` corresponsds to any offense punishable by death or imprisonment for a term of one year or more.
+Further restricting our previous subset on the cases above reduces the total number of observations by another `r nrow(data2)-nrow(data3)`. In total we have lost `r nrow(data) - nrow(data3)` observations from our raw dataset.
+
+Finally, we subset what is remaining on the subjects final plea:
+```{r}
+data4 <- data3 %>% filter((TRIAL == "1"))
+```
+
+- 1: Not Guilty/Deny
+- 2: Guilty (includes Alford Plea)/Admit
+- 3: Nolo-Contendere
+- 4: Not Guilty by reason of Insanity
+- 5: No plea entered (primarily used in conjunction with bond estreatures and dismissals)
+
+```{r}
+data4 <- data4 %>% filter((RACE == "B" | RACE =="W")) 
+```
+
+## Results
+
+```{r , echo=FALSE}
+ggplot(data=data4, aes(x=COURT_CHARGE_DEGREE, fill=RACE)) + 
+  geom_bar(aes(color=RACE)) + theme_minimal()
+```
+
+- C: Capital 
+- L: Life 
+- P: First Degree, punishable by life*
+- F: First Degree
+- S: Second Degree
+- T: Third Degree 
+- N: N/A - When the level of the charge is reflected as an infraction, county or municipal.
+
+
+[^3]: This field will represents the final action taken by the prosecutor or grand jury
+[^4]: This field will identify the court responsible for the charge.
+[^5]: Used to identify the seriousness of the offense as identified by the
+arresting/initiating agency.
