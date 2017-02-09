@@ -1,8 +1,8 @@
 ---
-title: "Williams Defense"
+title: "William's Defense"
 author: "Caleb Dowdy"
 date: "January 26, 2017"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
