@@ -13,11 +13,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Our criminal justice system is sustained by the belief that all citizens are to be afforded fair and equal treatment under the law.  It is no secret, however, that our prison population is skewed by race: people of color are over-represented as a proportion of those incarcerated.  Investigating why this is the status quo and how the status quo can be addressed is an important and difficult problem, one deserving careful attention.  
 
-Recently, the Sarasota Herald Tribune ran a four part series addressing the issue of bias in the Florida Criminal Justice System.  Their series, entitled "Bias On The Bench", lays the blame for the status quo squarely at the feet of Florida's judges.  The series purports to be data-driven, the result of a year of work involving millions of cases.  It names names: the series ascribes biased sentencing behavior to specific judges and in so doing impunges their credibility and the credibility of the system they represent.  It does not provide the raw data from which the conclusions are drawn, it does not provide the algorithms or software used to clean and process the data, and it does not provide a clear discussion of how the processed data is being interpreted.
+Recently, the Sarasota Herald Tribune ran a four part series addressing the issue of bias in the Florida Criminal Justice System.  Their series, entitled "Bias On The Bench", lays the blame for the status quo squarely at the feet of Florida's judges.  The series purports to be data-driven, the result of a year of work involving millions of cases.  It names names: the series ascribes biased sentencing behavior to specific judges and in so doing impunges their credibility and the credibility of the system they represent.  It does not provide the raw data from which the conclusions are drawn, it does not provide the algorithms or software used to clean and process the data, and it does not provide a clear discussion of how the processed data is being interpreted.[^1]
 
 Because the charge of bias is serious, it is essential that it be well-founded.  In this note we review the data associated to two of the judges named in the Sarasota Herald Tribune series, Judge Lee Haworth and Judge Charles Williams.  We provide both a description of the data used for our study and a link to the raw data.  We provide a description of how we process the data and the software and algorithms we use.  We provide a discussion of how we interpret the results of our processed data.  Our report is thus **fully reproducible:** anyone who downloads the data can check the results we report.  We have constructed the code to be reusable and we have provided an example for how those interested might use our tools to investigate data associated to other judges.
 
 Our conclusions are visualized in Figure 3: contrary to what was reported in the Sarasota Herald Tribune, there is no evidence of bias in the sentencing record of Judge Williams.  
+
+[^1]: The "Bias on the Bench" project can be found at the following url http://projects.heraldtribune.com/bias/
 
 ##Data and software
 
@@ -25,7 +27,9 @@ Data maintained by the Offender Based Transaction System (OBTS) was obtained for
 
 The quality of the raw data leaves much to be desired.  A quick scan reveals a number of missing values, fields where values have been incorrectly entered, fields in which information has been hashed, and fields where coded information might be coerced and corrupted unless care is taken in processing.
 
-To process the data we employed the R statistical programming language and the R Studio IDE.  Both R and R Studio are available for free download.  They represent the state of the art for statistical processing packages.  
+To process the data we employed the R statistical programming language and the R Studio IDE.  Both R and R Studio are available for free download.[^2]  They represent the state of the art for statistical processing packages. 
+
+[^2]: R and Rstudio can be found: https://cran.r-project.org/  https://www.rstudio.com  , respectively.
 
 ##Initial data processing
 
@@ -36,7 +40,7 @@ library(data.table)
 library(tidyverse)
 library(dplyr)
 library(plyr)
-Data <- read.csv("~/Projects/Criminal Justice/Crim_Bias-master/source.csv",colClasses = c("SP_LengthofConfinement"="factor"), strip.white = TRUE)
+Data <- read.csv("~/Documents/Classes/CJS/Crim_Bias/source.csv", colClasses=c("SP_LengthofConfinement"="character"), strip.white = TRUE)
 class(Data)
 dim(Data)
 ```
@@ -87,7 +91,17 @@ Next, we filter the data to obtain the records for which Charles Williams is the
 #remove white space
 Data[,80] <- gsub("\\s", "", Data[,80])
 ##initial data filter
-Williams_data <- Data %>% filter((Data[,80]=="WILLIAMS,CHARLES") | (Data[,80]=="WILLIAMS,CHARLESE")) %>% filter((PROSECUTOR_ACTION == "N") | (PROSECUTOR_ACTION == "C"))%>% filter((COURT_DESIGNATOR != "J")) %>% filter((COURT_CHARGE_LEVEL == "F")) %>% filter((COURT_ACTION == "G") | (COURT_ACTION == "E") | (COURT_ACTION == "W"))
+Williams_data <- Data %>%
+    # Cases where judge at sentencing was Charles Williams
+    filter((Data[,80]=="WILLIAMS,CHARLES") | (Data[,80]=="WILLIAMS,CHARLESE")) %>% 
+    # Cases where prosecutor pursues charges
+    filter((PROSECUTOR_ACTION == "N") | (PROSECUTOR_ACTION == "C")) %>%
+    # Remove cases involving juveniles 
+    filter((COURT_DESIGNATOR != "J")) %>%
+    # Cases tried as felonies
+    filter((COURT_CHARGE_LEVEL == "F")) %>% 
+    # Cases dismissed upon payment or restitution/court cost, found guilty, and  where adjudication was withheld.
+    filter((COURT_ACTION == "G") | (COURT_ACTION == "E") | (COURT_ACTION == "W"))
 
 ##check size
 dim(Williams_data)
@@ -96,18 +110,21 @@ dim(Williams_data)
 Our initial filtration results in `r dim(Williams_data)[1]` observations of `r dim(Williams_data)[2]` features.  We can produce a preliminary view of the data:
 
 ```{r}
+Williams_data$TRIAL <- factor(Williams_data$TRIAL, labels = c("No Trial", "Trial by Jury", "Trial by Judge"))
+
 ggplot(data=Williams_data, aes(x=COURT_CHARGE_DEGREE, fill = RACE)) + 
+  scale_fill_manual(values=c("#999999","#FF9999", "#009E73", "#56B4E9"))+
   geom_bar() +
-  facet_grid(TRIAL ~ .) + 
+  facet_grid(TRIAL ~ . , scales = "free_y") + 
   labs(title = "Judge Charles Williams: Distribution of felonies by degree, faceted on trial") + 
   labs(y= "Number of records") + 
   labs(x= "Degree of felony") +
   labs(caption="Figure 1: Comparison of cases involving trials (2 and 3) and cases involving no trial (1)")
 ```
 
-Figure 1 provides a look at how the felony data is distributed across degree (F- first degree felonies, L- life, P- first degree felonies punishable by life, S- second degree felonies, T- third degree felonies), faceted on trial (1- no trial occured, 2- trial by jury, 3- trial by judge).  There is a common scale for the plots.  The relative size of the boxes in the top figure (no trial) versus the boxes in the lower two figures  gives an accurate visual display of the collapse in the data. The figure includes a description of how the felony data is distributed according to race.  We note that for third degree felonies (the largest of the categories for plead cases), white defendents dominate the observations. 
+Figure 1 provides a look at how the felony data is distributed across degree (F- first degree felonies, L- life, P- first degree felonies punishable by life, S- second degree felonies, T- third degree felonies), faceted on trial (1- no trial occured, 2- trial by jury, 3- trial by judge). The order of magnitude of the scale in the top figure (no trial) versus the scale in the lower two figures  gives a sense of the collapse in the data. The figure includes a description of how the felony data is distributed according to race.  We note that for third degree felonies (the largest of the categories for plead cases), white defendents dominate the observations. 
 
-While it is important to keep in mind that we have yet to construct a unique identifier for each case, it is possible to get some idea for how much of the data involves plea bargains in which the judge has minimal discretion with respect to sentencing.  To do so, filter on cases that involved a trial.  The data dictionary indicates that the value "1" in the TRIAL field indicates that no trial occured.
+While it is important to keep in mind that we have yet to construct a unique identifier for each case, it is possible to get some idea for how much of the data involves plea bargains in which the judge has minimal discretion with respect to sentencing.  To do so, filter on cases that involved a trial.  The data dictionary indicates that the value "1" in the `TRIAL` field indicates that no trial occured.
 
 ```{r}
 W_data <- Williams_data %>% filter((TRIAL != "1"))
@@ -146,7 +163,7 @@ We will focus attention on the second subfield.
 We begin cleaning by establishing how much of the data is in the form described by the data dictionary.
 
 ```{r}
-SENTENCE <- as.character(W_data$LENGTH_CONFINEMENT)
+SENTENCE <- W_data$LENGTH_CONFINEMENT
 SCOUNT <- sapply(SENTENCE,nchar)
 length(unique(SCOUNT))
 ```
@@ -158,8 +175,8 @@ The data dictionary indicates that when length of confinement is not applicable,
 ```{r}
 ##Trim to work with second subfield
 T<- W_data
-T$LENGTH_CONFINEMENT <- gsub("^.......", "", T$LENGTH_CONFINEMENT)
-
+T$LENGTH_CONFINEMENT <- substr(T$LENGTH_CONFINEMENT, start = 8, stop = 14)
+ 
 ##Deal with the NA data by building a tag
 ##Write a function to generate a logical vector that marks 8888888.
 
@@ -170,7 +187,6 @@ AS <- function(x) {
    return(y)
  }
 CRAZY_8 <- function(U) { 
-   U <- as.character(U)
    T <- as.vector(sapply(U,AS))
    return(T)}
 
@@ -181,19 +197,19 @@ T <- T %>% mutate(GOOD_FORM = CRAZY_8(LENGTH_CONFINEMENT)) %>% filter(GOOD_FORM=
 ```
 Thus, we have eliminated `r (length(W_data$LENGTH_CONFINEMENT) - length(T$LENGTH_CONFINEMENT))` observtions in which the length of sentence field recorded "Not Applicable." 
 
-Next, we isolate the life sentences.  From the data dictionary, these correspond to sentences of the form "9999999"
+Next, we isolate the death sentences.  From the data dictionary, these correspond to sentences of the form "9999999"
 
 ```{r}
 sum(T$LENGTH_CONFINEMENT=="9999999")
 ```
 
-This indicates that there are `r sum(T$LENGTH_CONFINEMENT=="9999999")` life sentences recorded as such in the data involving Judge Williams.
+This indicates that there are `r sum(T$LENGTH_CONFINEMENT=="9999999")` death sentences recorded as such in the data involving Judge Williams.
 
-Next, we write a function which converts the length of confinement data to years.  We start with the first three characters.  Our function reads the first three characters, converts them to numeric and writes a column called SYEARS.
+Next, we write a function which converts the length of confinement data to years.  We start with the first three characters.  Our function reads the first three characters, converts them to numeric and writes a column called `SYEARS`.
 
 ```{r}
 Years <- function(x) {
-  y <- substring(x,1,3)
+  y <- substr(x, start = 1, stop = 3)
   y <- as.numeric(y)
   return(y)
 }
@@ -209,9 +225,9 @@ Williams_clean <- T %>% filter(SYEARS < 500)
 To convert months to years, kill the first three characters and convert the second two by dividing by 12.
 
 ```{r}
+
 Months <- function(x) {
-  y <- gsub("^...", "", x)
-  y <- substring(y,1,2)
+  y <- substr(x,4,5)
   y <- (as.numeric(y))/12
   return(y)
 }
@@ -238,7 +254,7 @@ We can visualize the distribution of sentence length as a function of race, face
 ```{r}
 ggplot(data=Williams_clean, aes(x=RACE, y=STOTAL, fill=RACE)) +
   geom_boxplot() +
-  facet_grid(COURT_CHARGE_DEGREE ~ .) +
+  facet_grid(COURT_CHARGE_DEGREE ~ ., scales = 'free') +
   labs(title= "Judge Charles Williams sentence length by race, faceted on felony degree") +
   labs(x="Race") +
   labs(y= "Length of sentence in years") +
@@ -256,11 +272,11 @@ There are `r length(unique(W_data$OBTS_NUM))` unique OBTS numbers and there are 
 
 ```{r}
 W_id <- W_data %>% select(c(3,22,78)) ## build frame on OBTS, crime date and sentence date
-W_id %>% group_by(OBTS_NUM, ARREST_DATE, DATE_SENTENCE_IMPOSED) %>% summarize(count)
+W_id %>% group_by(OBTS_NUM, ARREST_DATE, DATE_SENTENCE_IMPOSED) 
 ```
 
 
-It's important to have some idea of the time during which data was collected. To obtain this information we study the field "DATE_SENTENCE_IMPOSED:"
+It's important to have some idea of the time during which data was collected. To obtain this information we study the field `DATE_SENTENCE_IMPOSED`:
 
 ```{r}
 dates <- sapply(Williams_data[,78], as.character)
